@@ -417,6 +417,12 @@ impl MediaSource for UnsupportedAsSlate {
     fn audio_stream(&self, stream: usize, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
         self.inner.audio_stream(stream, start, frames, sample_rate)
     }
+    /// The wrapped media's text metadata (camera slate, GPS, title). The wrapper only falls back
+    /// to the offline slate when the inner source cannot decode, so it is still the source of
+    /// record for metadata.
+    fn metadata(&self) -> &[(String, String)] {
+        self.inner.metadata()
+    }
 }
 
 /// A proxy standing in for its full-resolution media: reports the full-resolution info and hands
@@ -459,6 +465,12 @@ impl MediaSource for ProxySource {
     }
     fn audio_stream(&self, stream: usize, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
         self.audio_from.as_ref().unwrap_or(&self.proxy).audio_stream(stream, start, frames, sample_rate)
+    }
+    /// The text metadata of the media actually being read: the proxy stand-in. A proxy written by
+    /// the recording app carries the original's slate; one made by FilmCraft's own transcode does
+    /// not, and then the slate is reported as empty rather than guessed.
+    fn metadata(&self) -> &[(String, String)] {
+        self.proxy.metadata()
     }
 }
 
@@ -617,5 +629,56 @@ mod tests {
         let st = s.media.offline_status(item).unwrap();
         assert_eq!(st.reason, OfflineReason::Unreadable);
         assert!(st.error.contains("H.264") && st.error.contains("chroma_format_idc 3"), "{}", st.error);
+    }
+
+    /// The wrappers the pool puts around a source must not swallow its text metadata. The pool
+    /// wraps every source in [`UnsupportedAsSlate`] and a proxied one in [`ProxySource`]; before
+    /// they forwarded [`MediaSource::metadata`], a camera slate read through [`crate::Session::source`]
+    /// was silently empty even though the file carried one.
+    #[test]
+    fn pool_wrappers_forward_camera_slate_metadata() {
+        struct WithSlate {
+            info: MediaInfo,
+            md: Vec<(String, String)>,
+        }
+        impl MediaSource for WithSlate {
+            fn info(&self) -> &MediaInfo {
+                &self.info
+            }
+            fn video_frame(&self, _req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
+                Ok(Arc::new(VideoFrame::rgba8(1, 1, vec![0; 4])))
+            }
+            fn audio(&self, _start: i64, _frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
+                Ok(AudioBuffer::silence(sample_rate, 1, 0))
+            }
+            fn metadata(&self) -> &[(String, String)] {
+                &self.md
+            }
+        }
+        let info = || MediaInfo {
+            name: "a.mp4".into(),
+            kind: filmcraft_media::MediaKind::Movie,
+            duration: filmcraft_time::Tick::ZERO,
+            video: None,
+            audio_streams: Vec::new(),
+            container: "MPEG-4".into(),
+            start_timecode: None,
+            file_size: None,
+        };
+        let md = vec![("com.blackmagic-design.camera.scene".to_string(), "7".to_string())];
+
+        let inner: SharedSource = Arc::new(WithSlate { info: info(), md: md.clone() });
+        let wrapped = UnsupportedAsSlate {
+            inner,
+            slate: SlateSource::new(info(), "a.mp4", OfflineReason::Unreadable),
+            item: ItemId(1),
+            path: "a.mp4".into(),
+            offline: Arc::new(RwLock::new(HashMap::new())),
+        };
+        assert_eq!(wrapped.metadata(), md.as_slice(), "UnsupportedAsSlate must forward metadata");
+
+        let proxy: SharedSource = Arc::new(WithSlate { info: info(), md: md.clone() });
+        let p = ProxySource { proxy, info: info(), audio_from: None };
+        assert_eq!(p.metadata(), md.as_slice(), "ProxySource must forward the proxy's metadata");
     }
 }

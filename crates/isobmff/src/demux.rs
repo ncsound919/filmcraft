@@ -202,6 +202,13 @@ pub struct Mp4File {
 }
 
 impl Mp4File {
+    /// The camera slate this file carries (camera, reel, scene, take, ISO, lens, GPS…).
+    ///
+    /// Reads only metadata the file already holds; empty when it holds none.
+    pub fn slate(&self) -> crate::CameraSlate {
+        crate::slate_from_metadata(&self.metadata)
+    }
+
     /// Read the bytes of sample `index` of track `track` (index into [`tracks`](Self::tracks)).
     pub fn read_sample<S: ByteSource + ?Sized>(&self, src: &S, track: usize, index: usize) -> Result<Vec<u8>> {
         let t = self.tracks.get(track).ok_or(Error::NoSuchTrack(track))?;

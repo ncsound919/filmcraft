@@ -178,6 +178,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             Err(EngineError::Other(NO_CAPTIONS.into()))
         }),
         spec("clip.updateMetadata", "Update Metadata…", &["Clip"], None, r#"{"items":[id]?}"#, has_file_selection, update_metadata),
+        spec("clip.readCameraSlate", "Read Camera Slate…", &["Clip"], None, r#"{"items":[id]?,"apply":bool=false}"#, has_file_selection, read_camera_slate),
         query("clip.generateAudioWaveform", "Generate Audio Waveform", &["Clip"], None, r#"{"items":[id]?}"#, has_audio_selection, generate_waveform),
         spec(
             "clip.automateToSequence",
@@ -1115,6 +1116,59 @@ fn generate_waveform(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Other("select a clip with audio".into()));
     }
     Ok(json!({"items": items}))
+}
+
+/// Clip ▸ Read Camera Slate…: read the camera slate a media file records in itself (camera, reel,
+/// scene, take, shot, lens, ISO, GPS…) and report it. With `apply`, the values are also copied onto
+/// the project's own metadata so they can be sorted, searched and exported.
+///
+/// The slate is read from the file, never typed by hand: an item whose media is a still, a
+/// generator or a project carries none and is reported as such. Files that record no slate (most
+/// phone and web video) yield an empty slate rather than an error.
+fn read_camera_slate(s: &mut Session, p: &Value) -> Result<Value> {
+    let apply = p.get("apply").and_then(Value::as_bool).unwrap_or(false);
+    // Read every slate first (this borrows the session immutably through `source`), then apply,
+    // so the mutable borrow that follows does not overlap a live source.
+    let read: Vec<(ItemId, filmcraft_codecs::CameraSlate)> = targets(s, p)
+        .into_iter()
+        .filter_map(|id| {
+            let src = s.source(id)?;
+            let md = filmcraft_codecs::ContainerMetadata { entries: src.metadata().to_vec() };
+            Some((id, filmcraft_codecs::slate_from_metadata(&md)))
+        })
+        .collect();
+    if read.is_empty() {
+        return Err(EngineError::Other("select a clip with a media file".into()));
+    }
+
+    let mut results = Vec::new();
+    let mut applied = Vec::new();
+    for (id, slate) in &read {
+        let fields: Vec<serde_json::Value> = slate.entries().into_iter().map(|(k, v)| json!({"field": k, "value": v})).collect();
+        let mut entry = json!({"item": id.0, "fields": fields});
+        // Record what would be written before writing it, so a file with no slate is still
+        // reported (with an empty field list) rather than silently skipped.
+        if apply && !slate.is_empty() {
+            let id = *id;
+            let values: Vec<(String, String)> = slate.entries().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            let n = values.len();
+            s.edit("Read Camera Slate", move |pr, _| {
+                let it = pr.item_mut(id).ok_or_else(|| bad("clip.readCameraSlate", "no such item"))?;
+                for (k, v) in &values {
+                    it.metadata.insert(k.clone(), v.clone());
+                }
+                Ok(())
+            })?;
+            applied.push(json!({"item": id.0, "fields": n}));
+            entry["applied"] = json!(true);
+        }
+        results.push(entry);
+    }
+    let mut out = json!({"items": results});
+    if apply {
+        out["applied"] = json!(applied);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -448,6 +448,12 @@ impl MediaSource for Mp4Source {
         &self.info
     }
 
+    /// The container's text metadata (QuickTime `udta`, the `keys`/`ilst` key table) — camera
+    /// slate, clip title, GPS. Parsed by the isobmff demuxer; returned untyped here.
+    fn metadata(&self) -> &[(String, String)] {
+        &self.file.metadata.entries
+    }
+
     fn video_frame(&self, req: FrameRequest) -> Result<Arc<VideoFrame>, MediaError> {
         let f = self.video_at(req.time.max(Tick::ZERO))?;
         Ok(f)

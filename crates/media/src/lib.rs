@@ -166,6 +166,12 @@ pub trait MediaSource: Send + Sync {
     fn audio_stream(&self, stream: usize, start: i64, frames: usize, sample_rate: u32) -> Result<AudioBuffer> {
         if stream == 0 { self.audio(start, frames, sample_rate) } else { Err(MediaError::NoStream("audio")) }
     }
+    /// Raw text metadata the container carries, as `(key, value)` pairs (camera slate, title,
+    /// QuickTime keys). Empty for containers without text metadata. This is the untyped view;
+    /// a caller that understands a vendor's keys turns it into a typed record.
+    fn metadata(&self) -> &[(String, String)] {
+        &[]
+    }
 }
 
 pub type SharedSource = Arc<dyn MediaSource>;

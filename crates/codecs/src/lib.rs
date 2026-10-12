@@ -44,6 +44,10 @@ pub use mxf::MxfSource;
 pub use ogg::OggSource;
 pub use video::{DecodedFrame, VideoDecoder, VideoDecoderFactory};
 
+/// The typed camera slate and the parser that turns a container's raw metadata pairs into it.
+/// Re-exported so crates above `codecs` can read a slate without depending on `isobmff` directly.
+pub use filmcraft_isobmff::{CameraSlate, Metadata as ContainerMetadata, slate_from_metadata};
+
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
     #[error("unsupported codec: {0}")]
